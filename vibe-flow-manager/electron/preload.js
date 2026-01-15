@@ -27,5 +27,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveClaudeResponse: (options) => ipcRenderer.invoke('save-claude-response', options),
 
     // .vibe-flow 폴더 파일 목록
-    listVibeFlowFiles: (workingDir) => ipcRenderer.invoke('list-vibe-flow-files', { workingDir })
+    listVibeFlowFiles: (workingDir) => ipcRenderer.invoke('list-vibe-flow-files', { workingDir }),
+
+    // Claude Code 설치 관련
+    checkClaudeInstalled: (projectPath) => ipcRenderer.invoke('check-claude-installed', { projectPath }),
+    initClaude: (projectPath) => ipcRenderer.invoke('init-claude', { projectPath }),
+    installAgents: (projectPath, agentNames) => ipcRenderer.invoke('install-agents', { projectPath, agentNames }),
+    listAvailableAgents: () => ipcRenderer.invoke('list-available-agents')
 });

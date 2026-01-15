@@ -259,3 +259,153 @@ ipcMain.handle('select-folder', async () => {
     return { success: false, error: err.message };
   }
 });
+
+// Claude Code 설치 여부 확인
+ipcMain.handle('check-claude-installed', async (event, { projectPath }) => {
+  try {
+    const claudeDir = path.join(projectPath, '.claude');
+    const isInstalled = fs.existsSync(claudeDir);
+    const hasAgents = fs.existsSync(path.join(claudeDir, 'agents'));
+
+    let installedAgents = [];
+    if (hasAgents) {
+      installedAgents = fs.readdirSync(path.join(claudeDir, 'agents'))
+        .filter(f => f.endsWith('.md'))
+        .map(f => f.replace('.md', ''));
+    }
+
+    return {
+      success: true,
+      isInstalled,
+      hasAgents,
+      installedAgents
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Claude Code 초기화 (프로젝트 폴더에 .claude 설정)
+ipcMain.handle('init-claude', async (event, { projectPath }) => {
+  try {
+    console.log('Claude Code 초기화:', projectPath);
+
+    const claudeDir = path.join(projectPath, '.claude');
+    const agentsDir = path.join(claudeDir, 'agents');
+    const settingsPath = path.join(claudeDir, 'settings.json');
+
+    // .claude 폴더 생성
+    if (!fs.existsSync(claudeDir)) {
+      fs.mkdirSync(claudeDir, { recursive: true });
+    }
+
+    // agents 폴더 생성
+    if (!fs.existsSync(agentsDir)) {
+      fs.mkdirSync(agentsDir, { recursive: true });
+    }
+
+    // 기본 settings.json 생성
+    if (!fs.existsSync(settingsPath)) {
+      const defaultSettings = {
+        version: '1.0',
+        createdBy: 'vibe-flow-manager',
+        createdAt: new Date().toISOString()
+      };
+      fs.writeFileSync(settingsPath, JSON.stringify(defaultSettings, null, 2));
+    }
+
+    console.log('Claude Code 초기화 완료');
+    return { success: true, path: claudeDir };
+  } catch (err) {
+    console.error('Claude Code 초기화 에러:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+// VFM 에이전트 설치
+ipcMain.handle('install-agents', async (event, { projectPath, agentNames }) => {
+  try {
+    console.log('에이전트 설치:', projectPath, agentNames);
+
+    const targetAgentsDir = path.join(projectPath, '.claude', 'agents');
+
+    // 에이전트 폴더가 없으면 생성
+    if (!fs.existsSync(targetAgentsDir)) {
+      fs.mkdirSync(targetAgentsDir, { recursive: true });
+    }
+
+    // 리소스 폴더에서 에이전트 파일 복사
+    const resourcesDir = app.isPackaged
+      ? path.join(process.resourcesPath, 'agents')
+      : path.join(__dirname, '../resources/agents');
+
+    const installedAgents = [];
+    const errors = [];
+
+    for (const agentName of agentNames) {
+      const sourceFile = path.join(resourcesDir, `${agentName}.md`);
+      const targetFile = path.join(targetAgentsDir, `${agentName}.md`);
+
+      if (fs.existsSync(sourceFile)) {
+        fs.copyFileSync(sourceFile, targetFile);
+        installedAgents.push(agentName);
+        console.log(`에이전트 설치됨: ${agentName}`);
+      } else {
+        errors.push(`에이전트 파일 없음: ${agentName}`);
+        console.error(`에이전트 파일 없음: ${sourceFile}`);
+      }
+    }
+
+    return {
+      success: true,
+      installedAgents,
+      errors: errors.length > 0 ? errors : null
+    };
+  } catch (err) {
+    console.error('에이전트 설치 에러:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+// 사용 가능한 에이전트 목록 조회
+ipcMain.handle('list-available-agents', async () => {
+  try {
+    const resourcesDir = app.isPackaged
+      ? path.join(process.resourcesPath, 'agents')
+      : path.join(__dirname, '../resources/agents');
+
+    if (!fs.existsSync(resourcesDir)) {
+      return { success: true, agents: [] };
+    }
+
+    const agents = fs.readdirSync(resourcesDir)
+      .filter(f => f.endsWith('.md'))
+      .map(f => {
+        const filePath = path.join(resourcesDir, f);
+        const content = fs.readFileSync(filePath, 'utf-8');
+
+        // YAML frontmatter 파싱
+        const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+        let name = f.replace('.md', '');
+        let description = '';
+        let color = 'gray';
+
+        if (frontmatterMatch) {
+          const frontmatter = frontmatterMatch[1];
+          const nameMatch = frontmatter.match(/name:\s*(.+)/);
+          const descMatch = frontmatter.match(/description:\s*"?([^"]+)"?/);
+          const colorMatch = frontmatter.match(/color:\s*(\w+)/);
+
+          if (nameMatch) name = nameMatch[1].trim();
+          if (descMatch) description = descMatch[1].trim().substring(0, 100);
+          if (colorMatch) color = colorMatch[1].trim();
+        }
+
+        return { name, description, color, fileName: f };
+      });
+
+    return { success: true, agents };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});

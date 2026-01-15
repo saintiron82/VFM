@@ -1,13 +1,103 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import useProjectStore from '../store/projectStore'
 
 function ProjectInput({ onClose }) {
     const { createProject, updateProject } = useProjectStore()
-    const [step, setStep] = useState('input') // input | decomposing | review
+    const [step, setStep] = useState('input') // input | setup | decomposing | review
     const [goal, setGoal] = useState('')
     const [workingDir, setWorkingDir] = useState('')
     const [components, setComponents] = useState([])
     const [isLoading, setIsLoading] = useState(false)
+
+    // Claude Code 설치 관련 상태
+    const [claudeStatus, setClaudeStatus] = useState(null) // { isInstalled, hasAgents, installedAgents }
+    const [availableAgents, setAvailableAgents] = useState([])
+    const [selectedAgents, setSelectedAgents] = useState([])
+    const [setupMessage, setSetupMessage] = useState('')
+
+    // 사용 가능한 에이전트 목록 로드
+    useEffect(() => {
+        const loadAgents = async () => {
+            if (window.electronAPI) {
+                const result = await window.electronAPI.listAvailableAgents()
+                if (result.success) {
+                    setAvailableAgents(result.agents)
+                    // 기본적으로 모든 에이전트 선택
+                    setSelectedAgents(result.agents.map(a => a.name))
+                }
+            }
+        }
+        loadAgents()
+    }, [])
+
+    // 폴더 선택 시 Claude 설치 상태 확인
+    const handleFolderSelect = async () => {
+        if (!window.electronAPI) return
+
+        const result = await window.electronAPI.selectFolder()
+        if (result.success) {
+            setWorkingDir(result.path)
+            if (!goal) setGoal(result.name)
+
+            // Claude 설치 상태 확인
+            const status = await window.electronAPI.checkClaudeInstalled(result.path)
+            if (status.success) {
+                setClaudeStatus(status)
+            }
+        }
+    }
+
+    // Claude Code 설정 (초기화 + 에이전트 설치)
+    const handleSetupClaude = async () => {
+        if (!workingDir || !window.electronAPI) return
+
+        setStep('setup')
+        setSetupMessage('Claude Code 초기화 중...')
+
+        try {
+            // 1. Claude Code 초기화
+            const initResult = await window.electronAPI.initClaude(workingDir)
+            if (!initResult.success) {
+                throw new Error(initResult.error)
+            }
+
+            setSetupMessage('에이전트 설치 중...')
+
+            // 2. 선택된 에이전트 설치
+            if (selectedAgents.length > 0) {
+                const installResult = await window.electronAPI.installAgents(workingDir, selectedAgents)
+                if (!installResult.success) {
+                    throw new Error(installResult.error)
+                }
+                setSetupMessage(`${installResult.installedAgents.length}개 에이전트 설치 완료!`)
+            }
+
+            // 상태 업데이트
+            const newStatus = await window.electronAPI.checkClaudeInstalled(workingDir)
+            if (newStatus.success) {
+                setClaudeStatus(newStatus)
+            }
+
+            // 잠시 후 다음 단계로
+            setTimeout(() => {
+                setStep('input')
+            }, 1000)
+
+        } catch (err) {
+            console.error('Claude 설정 에러:', err)
+            setSetupMessage(`에러: ${err.message}`)
+            setTimeout(() => setStep('input'), 2000)
+        }
+    }
+
+    // 에이전트 선택 토글
+    const toggleAgent = (agentName) => {
+        setSelectedAgents(prev =>
+            prev.includes(agentName)
+                ? prev.filter(a => a !== agentName)
+                : [...prev, agentName]
+        )
+    }
 
     const handleDecompose = async () => {
         if (!goal.trim()) return
@@ -124,19 +214,60 @@ function ProjectInput({ onClose }) {
                                 <button
                                     type="button"
                                     className="btn-secondary"
-                                    onClick={async () => {
-                                        if (window.electronAPI) {
-                                            const result = await window.electronAPI.selectFolder();
-                                            if (result.success) {
-                                                setWorkingDir(result.path);
-                                                if (!goal) setGoal(result.name);
-                                            }
-                                        }
-                                    }}
+                                    onClick={handleFolderSelect}
                                 >
-                                    📁 폴더 선택
+                                    폴더 선택
                                 </button>
                             </div>
+
+                            {/* Claude Code 설치 상태 표시 */}
+                            {workingDir && claudeStatus && (
+                                <div className="claude-status">
+                                    {claudeStatus.isInstalled ? (
+                                        <div className="status-installed">
+                                            <span className="status-badge success">Claude Code 설치됨</span>
+                                            {claudeStatus.hasAgents && (
+                                                <span className="agent-count">
+                                                    에이전트: {claudeStatus.installedAgents.length}개
+                                                </span>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="status-not-installed">
+                                            <span className="status-badge warning">Claude Code 미설치</span>
+                                            <button
+                                                type="button"
+                                                className="btn-small btn-primary"
+                                                onClick={handleSetupClaude}
+                                            >
+                                                설치하기
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* 에이전트 선택 (설치 안된 경우) */}
+                            {workingDir && claudeStatus && !claudeStatus.isInstalled && availableAgents.length > 0 && (
+                                <div className="agent-selection">
+                                    <label>설치할 에이전트 선택</label>
+                                    <div className="agent-list">
+                                        {availableAgents.map(agent => (
+                                            <label key={agent.name} className="agent-item">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedAgents.includes(agent.name)}
+                                                    onChange={() => toggleAgent(agent.name)}
+                                                />
+                                                <span className={`agent-badge ${agent.color}`}>
+                                                    {agent.name}
+                                                </span>
+                                                <span className="agent-desc">{agent.description}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         <div className="form-group">
@@ -160,6 +291,14 @@ function ProjectInput({ onClose }) {
                             </button>
                         </div>
                     </>
+                )}
+
+                {step === 'setup' && (
+                    <div className="loading-state">
+                        <div className="spinner"></div>
+                        <h3>Claude Code 설정 중...</h3>
+                        <p>{setupMessage}</p>
+                    </div>
                 )}
 
                 {step === 'decomposing' && (
