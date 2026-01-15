@@ -260,11 +260,14 @@ ipcMain.handle('select-folder', async () => {
   }
 });
 
-// Claude Code 설치 여부 확인
+// Claude Code 설치 여부 확인 (CLAUDE.md 기준)
 ipcMain.handle('check-claude-installed', async (event, { projectPath }) => {
   try {
+    const claudeMdPath = path.join(projectPath, 'CLAUDE.md');
     const claudeDir = path.join(projectPath, '.claude');
-    const isInstalled = fs.existsSync(claudeDir);
+
+    // CLAUDE.md 존재 여부가 핵심 판단 기준
+    const isInstalled = fs.existsSync(claudeMdPath);
     const hasAgents = fs.existsSync(path.join(claudeDir, 'agents'));
 
     let installedAgents = [];
@@ -277,6 +280,7 @@ ipcMain.handle('check-claude-installed', async (event, { projectPath }) => {
     return {
       success: true,
       isInstalled,
+      hasClaudeDir: fs.existsSync(claudeDir),
       hasAgents,
       installedAgents
     };
@@ -285,41 +289,79 @@ ipcMain.handle('check-claude-installed', async (event, { projectPath }) => {
   }
 });
 
-// Claude Code 초기화 (프로젝트 폴더에 .claude 설정)
+// Claude Code 초기화 (claude CLI 실행하여 /init 수행)
 ipcMain.handle('init-claude', async (event, { projectPath }) => {
-  try {
-    console.log('Claude Code 초기화:', projectPath);
+  return new Promise((resolve) => {
+    console.log('Claude Code 초기화 시작:', projectPath);
 
-    const claudeDir = path.join(projectPath, '.claude');
-    const agentsDir = path.join(claudeDir, 'agents');
-    const settingsPath = path.join(claudeDir, 'settings.json');
+    // claude CLI 실행하여 /init 명령 수행
+    const proc = spawn('claude', [], {
+      cwd: projectPath,
+      shell: true,
+      env: { ...process.env }
+    });
 
-    // .claude 폴더 생성
-    if (!fs.existsSync(claudeDir)) {
-      fs.mkdirSync(claudeDir, { recursive: true });
-    }
+    let stdout = '';
+    let stderr = '';
 
-    // agents 폴더 생성
-    if (!fs.existsSync(agentsDir)) {
-      fs.mkdirSync(agentsDir, { recursive: true });
-    }
+    // 30초 타임아웃
+    const timeout = setTimeout(() => {
+      proc.kill();
+      console.log('Claude init 타임아웃');
+      resolve({ success: false, error: 'Timeout after 30 seconds' });
+    }, 30000);
 
-    // 기본 settings.json 생성
-    if (!fs.existsSync(settingsPath)) {
-      const defaultSettings = {
-        version: '1.0',
-        createdBy: 'vibe-flow-manager',
-        createdAt: new Date().toISOString()
-      };
-      fs.writeFileSync(settingsPath, JSON.stringify(defaultSettings, null, 2));
-    }
+    proc.stdout.on('data', (data) => {
+      stdout += data.toString();
+      console.log('Claude init 출력:', data.toString().substring(0, 100));
+    });
 
-    console.log('Claude Code 초기화 완료');
-    return { success: true, path: claudeDir };
-  } catch (err) {
-    console.error('Claude Code 초기화 에러:', err);
-    return { success: false, error: err.message };
-  }
+    proc.stderr.on('data', (data) => {
+      stderr += data.toString();
+      console.log('Claude init stderr:', data.toString());
+    });
+
+    proc.on('close', (code) => {
+      clearTimeout(timeout);
+      console.log('Claude init 종료:', code);
+
+      // CLAUDE.md 생성 확인
+      const claudeMdPath = path.join(projectPath, 'CLAUDE.md');
+      const claudeMdExists = fs.existsSync(claudeMdPath);
+
+      if (claudeMdExists) {
+        // .claude/agents 폴더 생성 (에이전트 설치용)
+        const agentsDir = path.join(projectPath, '.claude', 'agents');
+        if (!fs.existsSync(agentsDir)) {
+          fs.mkdirSync(agentsDir, { recursive: true });
+        }
+
+        resolve({ success: true, path: projectPath });
+      } else {
+        resolve({
+          success: false,
+          error: 'CLAUDE.md가 생성되지 않았습니다. claude CLI를 확인해주세요.',
+          stdout,
+          stderr
+        });
+      }
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timeout);
+      console.log('Claude init 에러:', err);
+      resolve({ success: false, error: err.message });
+    });
+
+    // /init 명령 전송
+    proc.stdin.write('/init\n');
+
+    // 잠시 후 종료 명령
+    setTimeout(() => {
+      proc.stdin.write('/exit\n');
+      proc.stdin.end();
+    }, 5000);
+  });
 });
 
 // VFM 에이전트 설치
