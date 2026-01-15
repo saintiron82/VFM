@@ -870,7 +870,7 @@ ipcMain.handle('list-directory', async (event, { dirPath, recursive = false }) =
 
       const items = fs.readdirSync(dir, { withFileTypes: true });
       return items
-        .filter(item => !item.name.startsWith('.') && item.name !== 'node_modules')
+        .filter(item => item.name !== 'node_modules')
         .map(item => {
           const itemPath = path.join(dir, item.name);
           const isDirectory = item.isDirectory();
@@ -973,6 +973,88 @@ ipcMain.handle('open-with-editor', async (event, { targetPath, editor }) => {
       await shell.openPath(targetPath);
     }
 
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ========================================
+// 터미널 관리
+// ========================================
+
+const activeTerminals = new Map(); // sessionId -> { proc, cwd, title }
+
+// 터미널 생성
+ipcMain.handle('spawn-terminal', async (event, { sessionId, cwd, title }) => {
+  try {
+    const shell = process.platform === 'win32' ? 'powershell.exe' : 'bash';
+    const proc = spawn(shell, [], {
+      cwd: cwd || process.cwd(),
+      shell: false,
+      env: process.env
+    });
+
+    // 출력 처리
+    proc.stdout.on('data', (data) => {
+      mainWindow.webContents.send('terminal-output', {
+        sessionId,
+        data: data.toString()
+      });
+    });
+
+    proc.stderr.on('data', (data) => {
+      mainWindow.webContents.send('terminal-output', {
+        sessionId,
+        data: data.toString()
+      });
+    });
+
+    // 종료 처리
+    proc.on('close', (code) => {
+      mainWindow.webContents.send('terminal-output', {
+        sessionId,
+        data: `\r\n[Process exited with code ${code}]\r\n`
+      });
+      activeTerminals.delete(sessionId);
+    });
+
+    proc.on('error', (err) => {
+      mainWindow.webContents.send('terminal-output', {
+        sessionId,
+        data: `\r\n[Error: ${err.message}]\r\n`
+      });
+    });
+
+    activeTerminals.set(sessionId, { proc, cwd, title });
+    return { success: true, sessionId };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// 터미널 입력
+ipcMain.handle('terminal-input', async (event, { sessionId, input }) => {
+  try {
+    const term = activeTerminals.get(sessionId);
+    if (term && term.proc.stdin.writable) {
+      term.proc.stdin.write(input);
+      return { success: true };
+    }
+    return { success: false, error: 'Terminal not found or not writable' };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// 터미널 종료
+ipcMain.handle('close-terminal', async (event, { sessionId }) => {
+  try {
+    const term = activeTerminals.get(sessionId);
+    if (term) {
+      term.proc.kill();
+      activeTerminals.delete(sessionId);
+    }
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };

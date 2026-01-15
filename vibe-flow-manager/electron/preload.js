@@ -48,7 +48,14 @@ window.electronAPI = {
     listDirectory: (dirPath, recursive = false) => ipcRenderer.invoke('list-directory', { dirPath, recursive }),
     openInVscode: (targetPath) => ipcRenderer.invoke('open-in-vscode', { targetPath }),
     openInExplorer: (targetPath) => ipcRenderer.invoke('open-in-explorer', { targetPath }),
-    openWithEditor: (targetPath, editor) => ipcRenderer.invoke('open-with-editor', { targetPath, editor })
+    openWithEditor: (targetPath, editor) => ipcRenderer.invoke('open-with-editor', { targetPath, editor }),
+
+    // 터미널
+    spawnTerminal: (options) => ipcRenderer.invoke('spawn-terminal', options),
+    terminalInput: (sessionId, input) => ipcRenderer.invoke('terminal-input', { sessionId, input }),
+    closeTerminal: (sessionId) => ipcRenderer.invoke('close-terminal', { sessionId }),
+    onTerminalOutput: (callback) => ipcRenderer.on('terminal-output', (e, data) => callback(data)),
+    removeTerminalListener: () => ipcRenderer.removeAllListeners('terminal-output')
 };
 
 console.log('✅ electronAPI loaded:', Object.keys(window.electronAPI));

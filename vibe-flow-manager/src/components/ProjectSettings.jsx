@@ -19,17 +19,44 @@ const STAGE_DESCRIPTIONS = {
     '완료': '문서화 및 최종 정리'
 }
 
+const DEFAULT_FILE_ASSOCIATIONS = {
+    'js,jsx,ts,tsx,json,html,css,md': 'vscode',
+    'txt,log': 'notepad',
+    'png,jpg,jpeg,gif,svg': 'default',
+    'pdf': 'default'
+}
+
+const EDITOR_OPTIONS = [
+    { value: 'vscode', label: 'VS Code' },
+    { value: 'notepad', label: '메모장' },
+    { value: 'notepad++', label: 'Notepad++' },
+    { value: 'default', label: '기본 프로그램' },
+    { value: 'custom', label: '직접 지정...' }
+]
+
 function ProjectSettings({ projectPath, onClose }) {
     const { vfmConfig, availableAgents, updateVfmConfig } = useProjectStore()
 
     const [config, setConfig] = useState(null)
     const [isSaving, setIsSaving] = useState(false)
     const [hasChanges, setHasChanges] = useState(false)
+    const [activeTab, setActiveTab] = useState('agents') // agents, files, explorer
+    const [newExtension, setNewExtension] = useState('')
+    const [newEditor, setNewEditor] = useState('vscode')
+    const [customEditorPath, setCustomEditorPath] = useState('')
 
     // 설정 로드
     useEffect(() => {
         if (vfmConfig) {
-            setConfig({ ...vfmConfig })
+            setConfig({
+                ...vfmConfig,
+                fileAssociations: vfmConfig.fileAssociations || DEFAULT_FILE_ASSOCIATIONS,
+                explorerSettings: vfmConfig.explorerSettings || {
+                    showHiddenFiles: true,
+                    defaultEditor: 'vscode',
+                    customEditorPath: ''
+                }
+            })
         }
     }, [vfmConfig])
 
@@ -64,6 +91,60 @@ function ProjectSettings({ projectPath, onClose }) {
     // 선택된 에이전트 정보 가져오기
     const getAgentInfo = (agentName) => {
         return availableAgents.find(a => a.name === agentName)
+    }
+
+    // 파일 연결 추가
+    const handleAddFileAssociation = () => {
+        if (!newExtension.trim()) return
+
+        const editor = newEditor === 'custom' ? customEditorPath : newEditor
+        if (!editor) return
+
+        setConfig(prev => ({
+            ...prev,
+            fileAssociations: {
+                ...prev.fileAssociations,
+                [newExtension.trim().toLowerCase()]: editor
+            }
+        }))
+        setNewExtension('')
+        setNewEditor('vscode')
+        setCustomEditorPath('')
+        setHasChanges(true)
+    }
+
+    // 파일 연결 삭제
+    const handleRemoveFileAssociation = (ext) => {
+        setConfig(prev => {
+            const newAssoc = { ...prev.fileAssociations }
+            delete newAssoc[ext]
+            return { ...prev, fileAssociations: newAssoc }
+        })
+        setHasChanges(true)
+    }
+
+    // 파일 연결 변경
+    const handleFileAssociationChange = (ext, editor) => {
+        setConfig(prev => ({
+            ...prev,
+            fileAssociations: {
+                ...prev.fileAssociations,
+                [ext]: editor
+            }
+        }))
+        setHasChanges(true)
+    }
+
+    // 탐색기 설정 변경
+    const handleExplorerSettingChange = (key, value) => {
+        setConfig(prev => ({
+            ...prev,
+            explorerSettings: {
+                ...prev.explorerSettings,
+                [key]: value
+            }
+        }))
+        setHasChanges(true)
     }
 
     if (!config) {

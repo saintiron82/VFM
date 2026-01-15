@@ -17,9 +17,16 @@ const getFileIcon = (name, isDirectory) => {
 }
 
 function TreeItem({ item, level = 0, onSelect, selectedPath, onContextMenu }) {
-    const [expanded, setExpanded] = useState(level < 1)
+    const [expanded, setExpanded] = useState(level < 2) // 기본 2레벨까지 펼침
     const [children, setChildren] = useState(item.children || null)
     const [loading, setLoading] = useState(false)
+
+    // 자식이 로드되면 상태 업데이트
+    useEffect(() => {
+        if (item.children) {
+            setChildren(item.children)
+        }
+    }, [item.children])
 
     const isSelected = selectedPath === item.path
 
@@ -87,19 +94,19 @@ function TreeItem({ item, level = 0, onSelect, selectedPath, onContextMenu }) {
     )
 }
 
-function SolutionExplorer({ projectPath, onClose }) {
+function SolutionExplorer({ projectPath, onClose, onFileSelect }) {
     const [items, setItems] = useState([])
     const [loading, setLoading] = useState(true)
     const [selectedPath, setSelectedPath] = useState(null)
     const [contextMenu, setContextMenu] = useState(null) // { x, y, item }
 
-    // 디렉토리 로드
-    const loadDirectory = useCallback(async () => {
+    // 디렉토리 로드 (재귀적으로 3레벨까지)
+    const loadDirectory = useCallback(async (recursive = true) => {
         if (!projectPath || !window.electronAPI) return
 
         setLoading(true)
         try {
-            const result = await window.electronAPI.listDirectory(projectPath, false)
+            const result = await window.electronAPI.listDirectory(projectPath, recursive)
             if (result.success) {
                 setItems(result.items)
             }
@@ -122,6 +129,11 @@ function SolutionExplorer({ projectPath, onClose }) {
 
     const handleSelect = async (item, openWithEditor = false) => {
         setSelectedPath(item.path)
+
+        // 파일 선택 콜백 호출
+        if (!item.isDirectory && onFileSelect) {
+            onFileSelect(item.path)
+        }
 
         if (!item.isDirectory && openWithEditor) {
             // 더블클릭: VS Code로 열기
@@ -183,9 +195,11 @@ function SolutionExplorer({ projectPath, onClose }) {
                     >
                         🔄
                     </button>
-                    <button className="btn-icon" onClick={onClose} title="닫기">
-                        ✕
-                    </button>
+                    {onClose && (
+                        <button className="btn-icon" onClick={onClose} title="닫기">
+                            ✕
+                        </button>
+                    )}
                 </div>
             </div>
 
