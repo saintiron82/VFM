@@ -4,14 +4,51 @@
   "description": "바이브코딩 워크플로우 자동화 시스템",
   "main": "electron/main.js",
   "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on tcp:5173 && cross-env IS_DEV=true electron .\"",
     "build": "vite build",
     "start": "vite build && electron .",
-    "electron": "electron ."
+    "electron": "electron .",
+    "dist": "vite build && electron-builder --win",
+    "dist:dir": "vite build && electron-builder --win --dir"
+  },
+  "build": {
+    "appId": "com.vfm.vibeflowmanager",
+    "productName": "Vibe Flow Manager",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "vfm-package/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "vfm-package",
+        "to": "vfm-package"
+      }
+    ],
+    "win": {
+      "target": [
+        "dir"
+      ],
+      "icon": "electron/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "portable": {
+      "artifactName": "VFM-Portable-${version}.exe"
+    }
   },
   "dependencies": {
     "@dnd-kit/core": "^6.1.0",
     "@dnd-kit/sortable": "^8.0.0",
     "flexlayout-react": "^0.8.18",
+    "node-pty": "^1.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0",
@@ -24,7 +61,10 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.0",
     "concurrently": "^8.2.0",
+    "cross-env": "^10.1.0",
     "electron": "^28.0.0",
+    "electron-builder": "^26.4.0",
+    "electron-reloader": "^1.2.3",
     "vite": "^5.0.0",
     "wait-on": "^7.2.0"
   }

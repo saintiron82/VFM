@@ -49,7 +49,9 @@ function Terminal({ sessionId, cwd, title, onClose }) {
         // 초기 fit
         setTimeout(() => {
             fitAddon.fit()
-        }, 0)
+            const { cols, rows } = xterm
+            window.electronAPI.resizeTerminal(sessionId, cols, rows)
+        }, 100)
 
         xtermRef.current = xterm
         fitAddonRef.current = fitAddon
@@ -67,13 +69,15 @@ function Terminal({ sessionId, cwd, title, onClose }) {
         }
         window.electronAPI.onTerminalOutput(outputHandler)
 
-        // 터미널 시작
+        // 터미널은 이미 부모 컴포넌트에서 생성됨 (ProjectInput.jsx)이지만 연결을 위해 호출 (백엔드에서 중복 처리)
         window.electronAPI.spawnTerminal({ sessionId, cwd, title })
 
         // 리사이즈 핸들러
         const handleResize = () => {
-            if (fitAddonRef.current) {
+            if (fitAddonRef.current && xtermRef.current) {
                 fitAddonRef.current.fit()
+                const { cols, rows } = xtermRef.current
+                window.electronAPI.resizeTerminal(sessionId, cols, rows)
             }
         }
         window.addEventListener('resize', handleResize)
@@ -81,7 +85,9 @@ function Terminal({ sessionId, cwd, title, onClose }) {
         // 클린업
         return () => {
             window.removeEventListener('resize', handleResize)
-            window.electronAPI.closeTerminal(sessionId)
+            window.electronAPI.removeTerminalListener()
+            // Parent component manages terminal lifecycle
+            // window.electronAPI.closeTerminal(sessionId)
             if (xtermRef.current) {
                 xtermRef.current.dispose()
             }

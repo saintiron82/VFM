@@ -1,0 +1,25 @@
+directories:
+  output: release
+  buildResources: build
+appId: com.vfm.vibeflowmanager
+productName: Vibe Flow Manager
+files:
+  - filter:
+      - dist/**/*
+      - electron/**/*
+      - vfm-package/**/*
+extraResources:
+  - from: vfm-package
+    to: vfm-package
+win:
+  target:
+    - dir
+  icon: electron/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+portable:
+  artifactName: VFM-Portable-${version}.exe
+electronVersion: 28.3.3

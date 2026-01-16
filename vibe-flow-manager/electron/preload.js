@@ -40,6 +40,17 @@ window.electronAPI = {
         ipcRenderer.removeAllListeners('claude-question');
     },
 
+    // 브레인스토밍
+    startBrainstormSession: (workingDir, goal) => ipcRenderer.invoke('start-brainstorm-session', { workingDir, goal }),
+    sendBrainstormResponse: (workingDir, conversationHistory, userResponse) => ipcRenderer.invoke('send-brainstorm-response', { workingDir, conversationHistory, userResponse }),
+    saveBrainstormSession: (workingDir, session) => ipcRenderer.invoke('save-brainstorm-session', { workingDir, session }),
+    loadBrainstormSession: (workingDir) => ipcRenderer.invoke('load-brainstorm-session', { workingDir }),
+    generateProjectDocs: (workingDir, brainstormData, goal) => ipcRenderer.invoke('generate-project-docs', { workingDir, brainstormData, goal }),
+    saveProjectDocs: (workingDir, docs) => ipcRenderer.invoke('save-project-docs', { workingDir, docs }),
+    onDocGenerationProgress: (callback) => {
+        ipcRenderer.on('doc-generation-progress', (event, data) => callback(data));
+    },
+
     // 파일 관리
     listVibeFlowFiles: (options) => ipcRenderer.invoke('list-vibe-flow-files', options),
     openFile: (filePath) => ipcRenderer.invoke('open-file', { filePath }),
@@ -52,6 +63,7 @@ window.electronAPI = {
 
     // 터미널
     spawnTerminal: (options) => ipcRenderer.invoke('spawn-terminal', options),
+    resizeTerminal: (sessionId, cols, rows) => ipcRenderer.invoke('resize-terminal', { sessionId, cols, rows }),
     terminalInput: (sessionId, input) => ipcRenderer.invoke('terminal-input', { sessionId, input }),
     closeTerminal: (sessionId) => ipcRenderer.invoke('close-terminal', { sessionId }),
     onTerminalOutput: (callback) => ipcRenderer.on('terminal-output', (e, data) => callback(data)),

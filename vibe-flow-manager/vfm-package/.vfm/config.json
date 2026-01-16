@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "installedAt": null,
   "stageAgents": {
     "초안": "vfm-draft",
@@ -8,5 +8,5 @@
     "검증": "vfm-verify",
     "완료": "vfm-complete"
   },
-  "customAgents": []
+  "customAgents": ["vfm-brainstorm", "vfm-orchestrator"]
 }

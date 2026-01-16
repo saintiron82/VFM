@@ -10,7 +10,15 @@
       "Bash(npm start)",
       "Bash(git add:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nRefactor kanban to spreadsheet-style grid layout\n\n- Change from column-based kanban to row-based grid \\(task per row, stage per column\\)\n- Add expandable/collapsible child tasks with depth indentation\n- Click stage cell to change task stage\n- Current stage highlighted with icon and glow effect\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(if exist \"C:\\\\Users\\\\saintiron\\\\TestBaseBall\\\\.vfm\\\\brainstorm-session.json\" del \"C:\\\\Users\\\\saintiron\\\\TestBaseBall\\\\.vfm\\\\brainstorm-session.json\")",
+      "Bash(npm run dev:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(del \"C:\\\\Users\\\\saintiron\\\\TestBaseBall\\\\.vfm\\\\brainstorm-session.json\")",
+      "Bash(start cmd /k \"npm run dev\")",
+      "Bash(claude --print --agent vfm-brainstorm --model opus -)",
+      "Bash(copy:*)"
     ]
   }
 }

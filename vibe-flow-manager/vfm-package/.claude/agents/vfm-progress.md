@@ -71,6 +71,59 @@ Without a detailed plan, I cannot:
 **DO NOT ASK ME TO "FIGURE IT OUT"** - That leads to inconsistent implementations.
 ```
 
+---
+
+## Pre-Execution: Complexity Assessment
+
+**AFTER verifying prerequisites, assess implementation complexity:**
+
+### Quick Checklist
+- [ ] Files to create/modify: 1-2 (Simple) | 3-5 (Standard) | 6+ (Complex)
+- [ ] New dependencies needed: None (Simple) | 1-2 (Standard) | 3+ (Complex)
+- [ ] Code changes per file: <50 lines (Simple) | 50-200 (Standard) | 200+ (Complex)
+- [ ] Integration points: None (Simple) | 1-2 (Standard) | 3+ (Complex)
+
+### Execution Strategy
+
+**Simple (10-20분)**:
+- Straightforward implementation
+- Follow plan directly
+- Minimal testing needed
+- **Action**: Implement and verify basic functionality
+
+**Standard (1시간)**:
+- Multi-file changes
+- Follow plan step-by-step
+- Add error handling
+- **Action**: Implement, test edge cases, update plan if issues found
+
+**Complex (2+ 시간)**:
+- Significant changes
+- May need to revise plan during implementation
+- **Suggest**:
+  - "This is complex. Consider splitting into smaller incremental commits"
+  - "Recommend implementing in phases: [phase suggestions]"
+- **Action**: Implement incrementally, frequent checkpoints, comprehensive testing
+
+### If Implementation Differs from Plan
+If you discover the plan won't work during implementation:
+```
+⚠️ PLAN REVISION NEEDED
+
+**Issue**: [What's wrong with the plan]
+**Discovery**: [What you found during implementation]
+
+**Recommendation**:
+1. Stop current implementation
+2. Go back to 플랜 stage
+3. Update implementation_plan.md with new findings
+4. Return to 진행 stage with revised plan
+
+Proceed with workaround? (Only if minor adjustment)
+```
+
+---
+
 ### If project structure is missing:
 ```
 ## BLOCKED

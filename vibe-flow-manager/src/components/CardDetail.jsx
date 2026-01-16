@@ -332,6 +332,52 @@ function CardDetail({ card, project, onClose }) {
         }
     }
 
+    // Orchestrator로 라우팅 판단
+    const consultOrchestrator = async (userRequest) => {
+        try {
+            const completedStages = Object.keys(card.stages).filter(s => card.stages[s]?.status === 'done')
+
+            const orchestratorPrompt = `## Task Context
+- Name: ${card.name}
+- Description: ${card.description || 'No description'}
+- Current Stage: ${card.currentStage}
+- Completed Stages: ${completedStages.join(', ') || 'None'}
+
+## User Request
+${userRequest}
+
+## Your Job
+Determine if this request is appropriate for the current stage (${card.currentStage}).
+Respond in JSON format as specified in your instructions.`
+
+            const result = await window.electronAPI.runClaude({
+                workingDir,
+                prompt: orchestratorPrompt,
+                agent: 'vfm-orchestrator',
+                model: 'sonnet',
+                permissionMode: 'default'
+            })
+
+            if (!result.stdout) {
+                return null
+            }
+
+            // JSON 추출 (마크다운 코드 블록 제거)
+            const jsonMatch = result.stdout.match(/```json\s*([\s\S]*?)\s*```/) ||
+                             result.stdout.match(/\{[\s\S]*\}/)
+
+            if (jsonMatch) {
+                const jsonStr = jsonMatch[1] || jsonMatch[0]
+                return JSON.parse(jsonStr)
+            }
+
+            return null
+        } catch (err) {
+            console.warn('Orchestrator 호출 실패:', err)
+            return null // Orchestrator 실패 시 현재 단계로 진행
+        }
+    }
+
     // 현재 단계 실행
     const handleExecute = async () => {
         setIsRunning(true)
@@ -343,6 +389,42 @@ function CardDetail({ card, project, onClose }) {
             : basePrompt
 
         try {
+            // Orchestrator 판단 (사용자가 추가 지시를 입력한 경우에만)
+            if (additionalInstruction?.trim()) {
+                setOutput('🔍 Orchestrator가 요청을 분석 중...\n\n')
+
+                const routing = await consultOrchestrator(fullPrompt)
+
+                if (routing && !routing.currentStageOk) {
+                    // 단계 변경 제안
+                    const confirmMessage = `⚠️ 단계 변경 제안
+
+현재 요청: "${additionalInstruction}"
+
+${routing.reasoning}
+
+제안: "${routing.suggestedStage}" 단계로 이동
+${routing.note || ''}
+
+이 단계로 이동하시겠습니까?
+
+[확인] - ${routing.suggestedStage} 단계로 이동
+[취소] - 현재 단계(${card.currentStage})에서 실행`
+
+                    if (window.confirm(confirmMessage)) {
+                        // 단계 이동
+                        setOutput(prev => prev + `\n✓ ${routing.suggestedStage} 단계로 이동합니다.\n\n`)
+                        await setTaskStage(card.id, routing.suggestedStage)
+                        setIsRunning(false)
+                        return
+                    } else {
+                        setOutput(prev => prev + `\n→ 현재 단계(${card.currentStage})에서 계속 진행합니다.\n\n`)
+                    }
+                } else if (routing) {
+                    setOutput(prev => prev + `✓ ${routing.reasoning}\n\n`)
+                }
+            }
+
             const result = await executeStage(card.currentStage, fullPrompt, useInteractiveMode)
 
             if (result.success) {

@@ -2,7 +2,7 @@
 name: vfm-plan
 description: "플랜 단계: 구현 계획 및 아키텍처를 설계합니다"
 model: opus
-permissionMode: default
+permissionMode: acceptEdits
 color: blue
 ---
 
@@ -61,6 +61,58 @@ Execute Draft stage first with the task: "[task name]"
 ```
 
 **DO NOT create a plan without understanding what to build.**
+
+---
+
+## Pre-Execution: Complexity Assessment
+
+**BEFORE planning, evaluate request complexity:**
+
+### Quick Checklist
+- [ ] Files to change: 1-2 (Simple) | 3-5 (Standard) | 6+ (Complex)
+- [ ] External dependencies: None (Simple) | 1-2 (Standard) | 3+ (Complex)
+- [ ] Architecture impact: None (Simple) | Minor (Standard) | Major (Complex)
+- [ ] Requirements clarity: Clear (Simple) | Partially (Standard) | Unclear (Complex)
+
+### Execution Strategy
+
+**Simple (5-10분)**:
+- Brief plan (1-2 pages)
+- Main steps only (3-5 steps)
+- Quick implementation guide
+- **Action**: Write concise implementation_plan.md
+
+**Standard (30분)**:
+- Moderate plan (3-5 pages)
+- Detailed steps (5-10 steps)
+- Risk identification
+- File-by-file changes
+- **Action**: Write structured implementation_plan.md
+
+**Complex (1시간+)**:
+- Comprehensive plan (5+ pages)
+- Multi-phase approach
+- Architecture diagrams
+- Risk matrix
+- **Suggest**:
+  - "This is complex. Consider going back to 초안 stage first for deeper research"
+  - "Recommend splitting into sub-tasks: [list suggestions]"
+- **Action**: Write detailed implementation_plan.md with sub-task breakdown
+
+### If Draft Stage Missing
+If this is a complex request but 초안 stage was skipped:
+```
+⚠️ RECOMMENDATION
+
+This request appears complex but 초안 (Draft) stage was not completed.
+
+Suggested approach:
+1. Go back to 초안 stage first
+2. Research: [what needs investigation]
+3. Then return to 플랜 stage with findings
+
+Proceed anyway? (Yes if requirements are already clear)
+```
 
 ---
 

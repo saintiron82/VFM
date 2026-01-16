@@ -2,6 +2,15 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const pty = require('node-pty');
+
+// Enable auto-reload for development (main process)
+try {
+  require('electron-reloader')(module, {
+    debug: true,
+    watchRenderer: false // Vite handles renderer hot reload
+  });
+} catch (_) { /* ignore in production */ }
 
 let mainWindow;
 
@@ -19,8 +28,16 @@ function createWindow() {
     }
   });
 
-  // 빌드된 파일에서 로드
-  mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+  const isDev = process.env.IS_DEV === 'true';
+
+  if (isDev) {
+    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.webContents.openDevTools();
+    console.log('Running in DEVELOPMENT mode (Hot Reload enabled)');
+  } else {
+    // 빌드된 파일에서 로드
+    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+  }
 
   // 개발자 도구 (필요시 주석 해제)
   // mainWindow.webContents.openDevTools();
@@ -241,6 +258,309 @@ ipcMain.handle('get-claude-status', async (event, { processId }) => {
     question: processInfo.question
   };
 });
+
+// ===== Brainstorming IPC Handlers =====
+
+// Start brainstorming session
+ipcMain.handle('start-brainstorm-session', async (event, { workingDir, goal }) => {
+  return new Promise((resolve, reject) => {
+    console.log('=== BRAINSTORM SESSION START ===');
+    console.log('Working Dir:', workingDir);
+    console.log('Project Goal:', goal);
+
+    // Check vfm-brainstorm agent exists
+    const agentPath = path.join(workingDir, '.claude', 'agents', 'vfm-brainstorm.md');
+    console.log('Agent Path:', agentPath);
+    console.log('Agent Exists:', fs.existsSync(agentPath));
+
+    if (!fs.existsSync(agentPath)) {
+      console.error('ERROR: vfm-brainstorm agent not found!');
+      if (mainWindow) {
+        mainWindow.webContents.send('claude-output', {
+          processId: 'error',
+          data: 'ERROR: vfm-brainstorm agent not installed. Please reinstall VFM package.'
+        });
+      }
+      reject(new Error('vfm-brainstorm agent not installed'));
+      return;
+    }
+
+    const taskId = `brainstorm-${Date.now()}`;
+    const initialPrompt = `You are a project brainstorming consultant. Your task is to help the user define their project through structured questions.
+
+Project Goal: ${goal}
+
+Ask the following question in Korean immediately, without any introduction or pleasantries:
+
+**프로젝트의 핵심 목적과 비즈니스 가치는 무엇인가요?**
+- 해결하려는 문제가 무엇인지
+- 누구에게 어떤 가치를 제공하는지`;
+
+    const args = ['--print', '--model', 'opus', '-'];
+    console.log('Claude Command:', 'claude', args.join(' '));
+
+    const proc = spawn('claude', args, {
+      cwd: workingDir,
+      shell: true,
+      env: { ...process.env }
+    });
+
+    activeClaudeProcesses.set(taskId, {
+      proc,
+      status: 'running',
+      workingDir,
+      type: 'brainstorm'
+    });
+
+    let output = '';
+
+    // Forward real-time output
+    proc.stdout.on('data', (data) => {
+      const chunk = data.toString();
+      console.log('OUTPUT (first 200 chars):', chunk.substring(0, 200));
+      output += chunk;
+      if (mainWindow) {
+        mainWindow.webContents.send('claude-output', {
+          processId: taskId,
+          data: chunk
+        });
+      }
+    });
+
+    proc.stderr.on('data', (data) => {
+      const errorMsg = data.toString();
+      console.error('STDERR:', errorMsg);
+      if (mainWindow) {
+        mainWindow.webContents.send('claude-output', {
+          processId: taskId,
+          data: `[ERROR] ${errorMsg}`
+        });
+      }
+    });
+
+    proc.on('error', (err) => {
+      console.error('PROCESS ERROR:', err);
+      activeClaudeProcesses.delete(taskId);
+      reject(err);
+    });
+
+    proc.on('close', (code) => {
+      console.log('Process closed. Code:', code, 'Total output:', output.length, 'bytes');
+      activeClaudeProcesses.delete(taskId);
+    });
+
+    // Send initial prompt and close stdin to trigger response
+    console.log('Sending initial prompt...');
+    console.log('Prompt content:', initialPrompt);
+    proc.stdin.write(initialPrompt);
+    proc.stdin.end();
+    console.log('Prompt sent and stdin closed to trigger response...');
+
+    resolve({ success: true, processId: taskId });
+  });
+});
+
+// Send brainstorming response - restart Claude with full conversation history
+ipcMain.handle('send-brainstorm-response', async (event, { workingDir, conversationHistory, userResponse }) => {
+  return new Promise((resolve, reject) => {
+    console.log('=== BRAINSTORM RESPONSE ===');
+    console.log('User response:', userResponse);
+    console.log('Conversation history length:', conversationHistory.length);
+
+    const taskId = `brainstorm-${Date.now()}`;
+
+    // Build full conversation context
+    const conversationText = conversationHistory
+      .map(msg => `${msg.role === 'assistant' ? 'Assistant' : 'User'}: ${msg.content}`)
+      .join('\n\n');
+
+    const prompt = `You are a project brainstorming consultant. Continue this conversation and ask the next structured question.
+
+Previous conversation:
+${conversationText}
+
+User: ${userResponse}
+
+Now respond to the user's answer briefly, then ask the next question from the structured brainstorming list.`;
+
+    console.log('New prompt prepared, spawning Claude...');
+
+    const proc = spawn('claude', ['--print', '--model', 'opus', '-'], {
+      cwd: workingDir,
+      shell: true,
+      env: { ...process.env }
+    });
+
+    activeClaudeProcesses.set(taskId, {
+      proc,
+      status: 'running',
+      workingDir,
+      type: 'brainstorm'
+    });
+
+    let output = '';
+
+    proc.stdout.on('data', (data) => {
+      const chunk = data.toString();
+      console.log('OUTPUT:', chunk.substring(0, 200));
+      output += chunk;
+      if (mainWindow) {
+        mainWindow.webContents.send('claude-output', {
+          processId: taskId,
+          data: chunk
+        });
+      }
+    });
+
+    proc.stderr.on('data', (data) => {
+      console.error('STDERR:', data.toString());
+    });
+
+    proc.on('close', (code) => {
+      console.log('Process closed. Code:', code);
+      activeClaudeProcesses.delete(taskId);
+    });
+
+    proc.on('error', (err) => {
+      console.error('Process error:', err);
+      activeClaudeProcesses.delete(taskId);
+      reject(err);
+    });
+
+    proc.stdin.write(prompt);
+    proc.stdin.end();
+    console.log('Prompt sent and stdin closed');
+
+    resolve({ success: true, processId: taskId });
+  });
+});
+
+// Save brainstorming session
+ipcMain.handle('save-brainstorm-session', async (event, { workingDir, session }) => {
+  try {
+    const vfmDir = path.join(workingDir, '.vfm');
+    if (!fs.existsSync(vfmDir)) {
+      fs.mkdirSync(vfmDir, { recursive: true });
+    }
+
+    const sessionPath = path.join(vfmDir, 'brainstorm-session.json');
+    fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2));
+
+    console.log('Brainstorm session saved:', sessionPath);
+    return { success: true };
+  } catch (err) {
+    console.error('Session save error:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+// Load brainstorming session (DISABLED - always start fresh)
+ipcMain.handle('load-brainstorm-session', async (event, { workingDir }) => {
+  // Always return null to force fresh session
+  console.log('Brainstorm session load requested but DISABLED - starting fresh');
+  return { success: true, session: null };
+});
+
+// Generate project docs (CLAUDE.md, Spec.md, phase.md)
+ipcMain.handle('generate-project-docs', async (event, { workingDir, brainstormData, goal }) => {
+  return new Promise((resolve, reject) => {
+    console.log('Starting project document generation');
+
+    const conversationSummary = brainstormData.conversationHistory
+      .map(msg => `${msg.role}: ${msg.content}`)
+      .join('\n\n');
+
+    const docGenPrompt = `문서 생성 단계입니다.
+
+프로젝트 목표: ${goal}
+
+브레인스토밍 내용:
+${conversationSummary}
+
+위 브레인스토밍 결과를 바탕으로 다음 3개의 문서를 생성해주세요:
+
+1. CLAUDE.md - 프로젝트 개요, 아키텍처 결정사항, 개발 가이드라인, 코딩 컨벤션
+2. Spec.md - 기능 명세, 사용자 스토리, 요구사항
+3. phase.md - 마일스톤 기반 구현 계획 (v0.1, v0.2, v0.3...)
+
+각 파일은 다음 형식으로 구분해주세요:
+===FILE: CLAUDE.md===
+[내용]
+===END FILE===
+
+===FILE: Spec.md===
+[내용]
+===END FILE===
+
+===FILE: phase.md===
+[내용]
+===END FILE===`;
+
+    const args = ['--print', '--agent', 'vfm-brainstorm', '--model', 'opus', '-'];
+
+    const proc = spawn('claude', args, {
+      cwd: workingDir,
+      shell: true,
+      env: { ...process.env }
+    });
+
+    let output = '';
+
+    proc.stdout.on('data', (data) => {
+      output += data.toString();
+      // 실시간 출력 전달
+      if (mainWindow) {
+        mainWindow.webContents.send('doc-generation-progress', {
+          data: data.toString()
+        });
+      }
+    });
+
+    proc.stderr.on('data', (data) => {
+      console.error('Doc generation stderr:', data.toString());
+    });
+
+    proc.on('close', (code) => {
+      console.log('Doc generation complete:', code);
+
+      // 파일별 파싱
+      const claudeMatch = output.match(/===FILE:\s*CLAUDE\.md===\s*\n([\s\S]*?)\n===END FILE===/i);
+      const specMatch = output.match(/===FILE:\s*Spec\.md===\s*\n([\s\S]*?)\n===END FILE===/i);
+      const phaseMatch = output.match(/===FILE:\s*phase\.md===\s*\n([\s\S]*?)\n===END FILE===/i);
+
+      resolve({
+        success: true,
+        claudeMd: claudeMatch ? claudeMatch[1].trim() : '# CLAUDE.md\n\n프로젝트 가이드를 작성하세요.',
+        specMd: specMatch ? specMatch[1].trim() : '# Spec.md\n\n기능 명세를 작성하세요.',
+        phaseMd: phaseMatch ? phaseMatch[1].trim() : '# phase.md\n\n개발 단계를 작성하세요.'
+      });
+    });
+
+    proc.on('error', (err) => {
+      reject(err);
+    });
+
+    proc.stdin.write(docGenPrompt);
+    proc.stdin.end();
+  });
+});
+
+// Save project docs
+ipcMain.handle('save-project-docs', async (event, { workingDir, docs }) => {
+  try {
+    fs.writeFileSync(path.join(workingDir, 'CLAUDE.md'), docs.claudeMd, 'utf-8');
+    fs.writeFileSync(path.join(workingDir, 'Spec.md'), docs.specMd, 'utf-8');
+    fs.writeFileSync(path.join(workingDir, 'phase.md'), docs.phaseMd, 'utf-8');
+
+    console.log('Project docs saved:', workingDir);
+    return { success: true };
+  } catch (err) {
+    console.error('Doc save error:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+// ===== 기존 IPC 핸들러 =====
 
 // Claude 응답을 프로젝트 폴더에 저장
 ipcMain.handle('save-claude-response', async (event, { workingDir, stage, taskName, response, prompt }) => {
@@ -661,6 +981,7 @@ ipcMain.handle('install-vfm-package', async (event, { projectPath }) => {
     if (fs.existsSync(srcAgentsDir)) {
       const agents = fs.readdirSync(srcAgentsDir).filter(f => f.endsWith('.md'));
       for (const agent of agents) {
+        // 에이전트 파일 복사 (기존 파일이 있어도 최신 버전으로 덮어쓰기)
         fs.copyFileSync(
           path.join(srcAgentsDir, agent),
           path.join(claudeDir, agent)
@@ -985,78 +1306,98 @@ ipcMain.handle('open-with-editor', async (event, { targetPath, editor }) => {
 
 const activeTerminals = new Map(); // sessionId -> { proc, cwd, title }
 
-// 터미널 생성
+// 터미널 생성 (PTY 기반)
 ipcMain.handle('spawn-terminal', async (event, { sessionId, cwd, title }) => {
+  if (activeTerminals.has(sessionId)) {
+    console.log(`[Terminal PTY] Session ${sessionId} already exists, skipping spawn.`);
+    return { success: true, sessionId };
+  }
+
   try {
-    const shell = process.platform === 'win32' ? 'powershell.exe' : 'bash';
-    const proc = spawn(shell, [], {
+    const shell = process.platform === 'win32' ? 'cmd.exe' : 'bash';
+
+    // PTY 생성 - 진짜 터미널 에뮬레이션
+    const ptyProcess = pty.spawn(shell, [], {
+      name: 'xterm-256color',
+      cols: 120,
+      rows: 30,
       cwd: cwd || process.cwd(),
-      shell: false,
       env: process.env
     });
 
-    // 출력 처리
-    proc.stdout.on('data', (data) => {
-      mainWindow.webContents.send('terminal-output', {
-        sessionId,
-        data: data.toString()
-      });
+    console.log(`[Terminal PTY] Spawned ${shell} for session ${sessionId} in ${cwd}`);
+
+    // PTY 출력 처리
+    ptyProcess.onData((data) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('terminal-output', {
+          sessionId,
+          data: data
+        });
+      }
     });
 
-    proc.stderr.on('data', (data) => {
-      mainWindow.webContents.send('terminal-output', {
-        sessionId,
-        data: data.toString()
-      });
-    });
-
-    // 종료 처리
-    proc.on('close', (code) => {
-      mainWindow.webContents.send('terminal-output', {
-        sessionId,
-        data: `\r\n[Process exited with code ${code}]\r\n`
-      });
+    // PTY 종료 처리
+    ptyProcess.onExit(({ exitCode }) => {
+      console.log(`[Terminal PTY] Process exited with code ${exitCode}`);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('terminal-output', {
+          sessionId,
+          data: `\r\n[Process exited with code ${exitCode}]\r\n`
+        });
+      }
       activeTerminals.delete(sessionId);
     });
 
-    proc.on('error', (err) => {
-      mainWindow.webContents.send('terminal-output', {
-        sessionId,
-        data: `\r\n[Error: ${err.message}]\r\n`
-      });
-    });
-
-    activeTerminals.set(sessionId, { proc, cwd, title });
+    activeTerminals.set(sessionId, { ptyProcess, cwd, title });
     return { success: true, sessionId };
   } catch (err) {
+    console.error('[Terminal PTY] Spawn error:', err);
     return { success: false, error: err.message };
   }
 });
 
-// 터미널 입력
+// 터미널 크기 조절 (PTY)
+ipcMain.handle('resize-terminal', async (event, { sessionId, cols, rows }) => {
+  try {
+    const term = activeTerminals.get(sessionId);
+    if (term && term.ptyProcess) {
+      term.ptyProcess.resize(cols, rows);
+      return { success: true };
+    }
+    return { success: false, error: 'Terminal not found' };
+  } catch (err) {
+    console.error('[Terminal PTY] Resize error:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+// 터미널 입력 (PTY)
 ipcMain.handle('terminal-input', async (event, { sessionId, input }) => {
   try {
     const term = activeTerminals.get(sessionId);
-    if (term && term.proc.stdin.writable) {
-      term.proc.stdin.write(input);
+    if (term && term.ptyProcess) {
+      term.ptyProcess.write(input);
       return { success: true };
     }
-    return { success: false, error: 'Terminal not found or not writable' };
+    return { success: false, error: 'Terminal not found' };
   } catch (err) {
+    console.error('[Terminal PTY] Input error:', err);
     return { success: false, error: err.message };
   }
 });
 
-// 터미널 종료
+// 터미널 종료 (PTY)
 ipcMain.handle('close-terminal', async (event, { sessionId }) => {
   try {
     const term = activeTerminals.get(sessionId);
-    if (term) {
-      term.proc.kill();
+    if (term && term.ptyProcess) {
+      term.ptyProcess.kill();
       activeTerminals.delete(sessionId);
     }
     return { success: true };
   } catch (err) {
+    console.error('[Terminal PTY] Close error:', err);
     return { success: false, error: err.message };
   }
 });

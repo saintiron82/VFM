@@ -2,7 +2,7 @@
 name: vfm-draft
 description: "초안 단계: 요구사항 조사 및 기술 분석을 수행합니다"
 model: sonnet
-permissionMode: default
+permissionMode: acceptEdits
 color: yellow
 ---
 
@@ -44,6 +44,35 @@ Before starting ANY work, verify these conditions:
 ```
 
 **DO NOT proceed with empty or vague task descriptions.**
+
+---
+
+## Pre-Execution: Complexity Assessment
+
+**BEFORE starting research, quickly assess the request complexity:**
+
+### Quick Checklist
+- [ ] How many technologies/libraries to research? (1-2: Simple | 3-5: Standard | 6+: Complex)
+- [ ] Are requirements clear? (Yes: Simple | Partially: Standard | No: Complex)
+- [ ] Prior knowledge needed? (None: Simple | Some: Standard | Deep dive: Complex)
+
+### Execution Strategy
+
+**Simple (5-10분)**:
+- Quick research (WebSearch, existing docs)
+- Concise summary (1-2 pages)
+- Key findings only
+
+**Standard (30분)**:
+- Thorough research (WebSearch, code analysis, comparison)
+- Structured analysis (3-5 pages)
+- Pros/cons comparison
+
+**Complex (1시간+)**:
+- Deep investigation (multiple sources, code deep-dive)
+- Comprehensive report (5+ pages)
+- Risk assessment, alternative approaches
+- **Suggest**: This may need to be split into sub-tasks
 
 ---
 

@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import useProjectStore from '../store/projectStore'
+import Terminal from './Terminal'
 
 function ProjectInput({ onClose, mode = 'new' }) {
     const {
@@ -10,7 +11,7 @@ function ProjectInput({ onClose, mode = 'new' }) {
         loadRegisteredProjects
     } = useProjectStore()
 
-    // input | install | setup | decomposing | review
+    // input | install | brainstorming | doc-generation | decomposing | review
     const [step, setStep] = useState('input')
     const [goal, setGoal] = useState('')
     const [workingDir, setWorkingDir] = useState('')
@@ -21,6 +22,31 @@ function ProjectInput({ onClose, mode = 'new' }) {
     const [vfmStatus, setVfmStatus] = useState(null) // { installed, version, needsUpdate }
     const [setupMessage, setSetupMessage] = useState('')
     const [showUpdatePrompt, setShowUpdatePrompt] = useState(false)
+
+    // 브레인스토밍 상태
+    const [brainstormSession, setBrainstormSession] = useState({
+        phase: 'structured', // 'structured' | 'conversation' | 'complete'
+        structuredAnswers: {},
+        conversationHistory: [],
+        currentQuestion: null,
+        pendingResponse: '',
+        processId: null
+    })
+
+    // 생성된 문서
+    const [generatedDocs, setGeneratedDocs] = useState({
+        claudeMd: '',
+        specMd: '',
+        phaseMd: ''
+    })
+    const [showDocPreview, setShowDocPreview] = useState(false)
+    const [activeDocTab, setActiveDocTab] = useState('claude')
+
+    // 현재 누적 중인 Claude 출력
+    const currentOutputRef = useRef('')
+    const conversationEndRef = useRef(null)
+
+    // 터미널 기반 브레인스토밍은 별도 리스너 불필요
 
     // 폴더 선택 시 VFM 패키지 확인
     const handleFolderSelect = async () => {
@@ -90,31 +116,123 @@ function ProjectInput({ onClose, mode = 'new' }) {
         }
     }
 
-    // 프로젝트 분해 시작
-    const handleDecompose = async () => {
+    // 브레인스토밍 세션 시작 (터미널 기반)
+    const handleStartBrainstorm = async () => {
         if (!goal.trim()) return
 
         // VFM 패키지가 없으면 먼저 설치
         if (!vfmStatus?.installed) {
             await handleInstallVfm()
-            // 설치 완료 후 계속
             const newStatus = await window.electronAPI?.checkVfmPackage(workingDir)
             if (!newStatus?.installed) {
-                return // 설치 실패
+                return
             }
         }
 
+        setStep('brainstorming')
+        setIsLoading(true)
+
+        try {
+            // 터미널 세션 시작
+            const sessionId = `brainstorm-${Date.now()}`
+            const terminalResult = await window.electronAPI.spawnTerminal({
+                sessionId,
+                cwd: workingDir,
+                shell: 'cmd.exe'
+            })
+
+            if (terminalResult.success) {
+                // 터미널 준비될 때까지 대기 (첫 출력 감지) - 3초 대기
+                console.log('Terminal created, waiting for prompt...')
+                await new Promise(r => setTimeout(r, 3000))
+
+                console.log('Sending claude command to terminal...')
+                try {
+                    await window.electronAPI.terminalInput(sessionId, 'claude --agent vfm-brainstorm --model opus')
+                    await new Promise(r => setTimeout(r, 100))
+                    await window.electronAPI.terminalInput(sessionId, '\r')
+                    console.log('Command sent and executed')
+                } catch (e) {
+                    console.error('terminalInput error:', e)
+                }
+
+                setBrainstormSession({
+                    terminalSessionId: sessionId,
+                    phase: 'structured'
+                })
+            }
+        } catch (err) {
+            console.error('Brainstorm start error:', err)
+            setStep('input')
+        }
+
+        setIsLoading(false)
+    }
+
+    // 문서 생성 (터미널 세션 종료 후)
+    const handleGenerateDocs = async () => {
+        // 터미널 세션 종료
+        if (brainstormSession.terminalSessionId) {
+            await window.electronAPI.closeTerminal(brainstormSession.terminalSessionId)
+        }
+
+        setStep('doc-generation')
+        setShowDocPreview(false)
+
+        try {
+            // 브레인스토밍 요약을 goal로 전달
+            const result = await window.electronAPI.generateProjectDocs(
+                workingDir,
+                { goal, summary: "Terminal brainstorming completed" },
+                goal
+            )
+
+            if (result.success) {
+                setGeneratedDocs({
+                    claudeMd: result.claudeMd || '',
+                    specMd: result.specMd || '',
+                    phaseMd: result.phaseMd || ''
+                })
+                setShowDocPreview(true)
+            }
+        } catch (err) {
+            console.error('문서 생성 에러:', err)
+            setStep('brainstorming')
+        }
+    }
+
+    // 문서 저장 및 분해 진행
+    const handleSaveDocsAndDecompose = async () => {
+        try {
+            // 문서 저장
+            await window.electronAPI.saveProjectDocs(workingDir, generatedDocs)
+
+            // 이제 문서 기반 분해 진행
+            await handleDecomposeWithDocs()
+        } catch (err) {
+            console.error('문서 저장 에러:', err)
+        }
+    }
+
+    // 문서 기반 프로젝트 분해
+    const handleDecomposeWithDocs = async () => {
         setIsLoading(true)
         setStep('decomposing')
 
         // 프로젝트 생성
         const project = await createProject(goal, workingDir)
 
-        // Claude Code로 분해 요청
         if (window.electronAPI) {
-            const prompt = `다음 프로젝트 목표를 분석하여 JSON 형식으로 분해해주세요:
+            const prompt = `프로젝트를 분해해주세요.
 
-목표: ${goal}
+프로젝트 목표: ${goal}
+
+다음 문서들을 참고하세요:
+- CLAUDE.md: 프로젝트 아키텍처 및 개발 가이드라인
+- Spec.md: 기능 명세 및 요구사항
+- phase.md: 마일스톤 계획
+
+**중요:** phase.md의 마일스톤 구조에 맞춰 태스크를 분해하되, 각 태스크는 반드시 특정 phase에 속해야 합니다.
 
 응답은 반드시 다음 JSON 형식만 출력해주세요 (다른 텍스트 없이):
 {
@@ -122,10 +240,15 @@ function ProjectInput({ onClose, mode = 'new' }) {
     {
       "name": "태스크 이름",
       "description": "설명",
-      "priority": 1
+      "priority": 1,
+      "milestone": "v0.1",
+      "dependencies": []
     }
   ]
-}`;
+}
+
+milestone은 phase.md에 정의된 마일스톤(v0.1, v0.2 등)을 사용하세요.
+dependencies는 이 태스크가 의존하는 다른 태스크의 이름 배열입니다.`;
 
             try {
                 const result = await window.electronAPI.runClaude({
@@ -135,7 +258,6 @@ function ProjectInput({ onClose, mode = 'new' }) {
                     permissionMode: 'default'
                 })
 
-                // 분석 결과 저장
                 if (result.stdout && workingDir) {
                     await window.electronAPI.saveClaudeResponse({
                         workingDir: workingDir,
@@ -146,7 +268,6 @@ function ProjectInput({ onClose, mode = 'new' }) {
                     })
                 }
 
-                // JSON 파싱 시도
                 const jsonMatch = result.stdout?.match(/\{[\s\S]*\}/)
                 if (jsonMatch) {
                     const parsed = JSON.parse(jsonMatch[0])
@@ -157,19 +278,17 @@ function ProjectInput({ onClose, mode = 'new' }) {
                 }
             } catch (err) {
                 console.error('Decompose error:', err)
-                // 기본 태스크로 폴백
                 setTasks([
-                    { name: '기본 구조', description: '프로젝트 기본 설정', priority: 1 }
+                    { name: '기본 구조', description: '프로젝트 기본 설정', priority: 1, milestone: 'v0.1' }
                 ])
                 setStep('review')
             }
         } else {
-            // 개발 모드: 더미 데이터
             setTasks([
-                { name: '인증 시스템', description: 'Google OAuth 로그인', priority: 1 },
-                { name: '데이터베이스', description: 'Firebase/Firestore 설정', priority: 2 },
-                { name: '메인 기능', description: '핵심 비즈니스 로직', priority: 3 },
-                { name: 'UI/UX', description: '사용자 인터페이스', priority: 4 }
+                { name: '인증 시스템', description: 'Google OAuth 로그인', priority: 1, milestone: 'v0.1' },
+                { name: '데이터베이스', description: 'Firebase/Firestore 설정', priority: 2, milestone: 'v0.1' },
+                { name: '메인 기능', description: '핵심 비즈니스 로직', priority: 3, milestone: 'v0.2' },
+                { name: 'UI/UX', description: '사용자 인터페이스', priority: 4, milestone: 'v0.2' }
             ])
             setStep('review')
         }
@@ -305,10 +424,10 @@ function ProjectInput({ onClose, mode = 'new' }) {
                             <button onClick={onClose}>취소</button>
                             <button
                                 className="btn-primary"
-                                onClick={handleDecompose}
-                                disabled={!goal.trim() || !workingDir}
+                                onClick={handleStartBrainstorm}
+                                disabled={!goal.trim() || !workingDir || isLoading}
                             >
-                                🤖 AI로 분해
+                                {isLoading ? '준비 중...' : '🧠 브레인스토밍 시작'}
                             </button>
                         </div>
                     </>
@@ -335,11 +454,126 @@ function ProjectInput({ onClose, mode = 'new' }) {
                     </div>
                 )}
 
+                {step === 'brainstorming' && (
+                    <>
+                        <h2>🧠 브레인스토밍</h2>
+                        <p className="subtitle">터미널에서 Claude와 직접 대화하세요</p>
+
+                        {/* 터미널 */}
+                        <div style={{ height: '500px', marginBottom: '1rem', border: '1px solid #444', borderRadius: '8px', overflow: 'hidden' }}>
+                            {brainstormSession.terminalSessionId && (
+                                <Terminal
+                                    sessionId={brainstormSession.terminalSessionId}
+                                    cwd={workingDir}
+                                    title="브레인스토밍"
+                                />
+                            )}
+                        </div>
+
+                        {/* 문서 생성 버튼 */}
+                        <button
+                            className="btn-primary"
+                            onClick={handleGenerateDocs}
+                            style={{ marginTop: '1rem', width: '100%' }}
+                        >
+                            📝 브레인스토밍 종료 및 문서 생성
+                        </button>
+
+                        <div className="modal-actions">
+                            <button onClick={() => setStep('input')}>← 뒤로</button>
+                        </div>
+                    </>
+                )}
+
+                {step === 'doc-generation' && (
+                    <>
+                        <h2>📄 프로젝트 문서 생성</h2>
+
+                        {!showDocPreview ? (
+                            <div className="loading-state">
+                                <div className="spinner"></div>
+                                <p>브레인스토밍 결과를 기반으로 문서를 생성하고 있습니다...</p>
+                                <ul className="doc-list" style={{ textAlign: 'left', margin: '1rem auto' }}>
+                                    <li>CLAUDE.md - 프로젝트 가이드</li>
+                                    <li>Spec.md - 기능 명세서</li>
+                                    <li>phase.md - 마일스톤 계획</li>
+                                </ul>
+                            </div>
+                        ) : (
+                            <>
+                                <p className="subtitle">
+                                    생성된 문서를 확인하고 수정할 수 있습니다
+                                </p>
+
+                                {/* 문서 탭 */}
+                                <div className="doc-tabs">
+                                    <button
+                                        className={activeDocTab === 'claude' ? 'active' : ''}
+                                        onClick={() => setActiveDocTab('claude')}
+                                    >
+                                        CLAUDE.md
+                                    </button>
+                                    <button
+                                        className={activeDocTab === 'spec' ? 'active' : ''}
+                                        onClick={() => setActiveDocTab('spec')}
+                                    >
+                                        Spec.md
+                                    </button>
+                                    <button
+                                        className={activeDocTab === 'phase' ? 'active' : ''}
+                                        onClick={() => setActiveDocTab('phase')}
+                                    >
+                                        phase.md
+                                    </button>
+                                </div>
+
+                                {/* 문서 편집기 */}
+                                <div className="doc-editor">
+                                    <textarea
+                                        value={
+                                            activeDocTab === 'claude'
+                                                ? generatedDocs.claudeMd
+                                                : activeDocTab === 'spec'
+                                                    ? generatedDocs.specMd
+                                                    : generatedDocs.phaseMd
+                                        }
+                                        onChange={(e) => {
+                                            const field =
+                                                activeDocTab === 'claude'
+                                                    ? 'claudeMd'
+                                                    : activeDocTab === 'spec'
+                                                        ? 'specMd'
+                                                        : 'phaseMd'
+                                            setGeneratedDocs({
+                                                ...generatedDocs,
+                                                [field]: e.target.value
+                                            })
+                                        }}
+                                        rows={20}
+                                        className="doc-content"
+                                    />
+                                </div>
+
+                                <div className="modal-actions">
+                                    <button onClick={() => setStep('brainstorming')}>← 수정</button>
+                                    <button
+                                        className="btn-primary"
+                                        onClick={handleSaveDocsAndDecompose}
+                                    >
+                                        문서 저장 및 분해 시작
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </>
+                )}
+
                 {step === 'decomposing' && (
                     <div className="loading-state">
                         <div className="spinner"></div>
                         <h3>AI가 프로젝트를 분석하고 있습니다...</h3>
                         <p>vfm-draft 에이전트가 프로젝트 구조를 분석합니다</p>
+                        <p className="hint">phase.md의 마일스톤 기반으로 작업을 분류합니다</p>
                     </div>
                 )}
 
