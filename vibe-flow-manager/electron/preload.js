@@ -1,37 +1,61 @@
-const { contextBridge, ipcRenderer } = require('electron');
+// nodeIntegration: true 모드에서 사용
+const { ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('electronAPI', {
-    // Claude Code 실행
+window.electronAPI = {
+    test: () => 'preload works!',
+    selectFolder: () => ipcRenderer.invoke('select-folder'),
+
+    // VFM 패키지
+    checkVfmPackage: (projectPath) => ipcRenderer.invoke('check-vfm-package', { projectPath }),
+    installVfmPackage: (projectPath) => ipcRenderer.invoke('install-vfm-package', { projectPath }),
+    loadProjectData: (projectPath) => ipcRenderer.invoke('load-project-data', { projectPath }),
+    saveProjectData: (projectPath, data) => ipcRenderer.invoke('save-project-data', { projectPath, data }),
+
+    // 프로젝트 목록
+    listRegisteredProjects: () => ipcRenderer.invoke('list-registered-projects'),
+    registerProject: (projectPath, name) => ipcRenderer.invoke('register-project', { projectPath, name }),
+    updateProjectAccess: (projectPath) => ipcRenderer.invoke('update-project-access', { projectPath }),
+    unregisterProject: (projectPath) => ipcRenderer.invoke('unregister-project', { projectPath }),
+
+    // VFM 설정
+    loadVfmConfig: (projectPath) => ipcRenderer.invoke('load-vfm-config', { projectPath }),
+    saveVfmConfig: (projectPath, config) => ipcRenderer.invoke('save-vfm-config', { projectPath, config }),
+    listAvailableAgents: (projectPath) => ipcRenderer.invoke('list-available-agents', { projectPath }),
+
+    // Claude 실행
     runClaude: (options) => ipcRenderer.invoke('run-claude', options),
-
-    // Claude 출력 실시간 수신
     onClaudeOutput: (callback) => {
         ipcRenderer.on('claude-output', (event, data) => callback(data));
     },
-
-    // 프로젝트 CRUD
-    saveProject: (projectId, data) => ipcRenderer.invoke('save-project', { projectId, data }),
-    loadProject: (projectId) => ipcRenderer.invoke('load-project', { projectId }),
-    listProjects: () => ipcRenderer.invoke('list-projects'),
-
-    // 워크플로우 생성
-    createWorkflow: (options) => ipcRenderer.invoke('create-workflow', options),
-
-    // 히스토리 조회
-    getClaudeHistory: () => ipcRenderer.invoke('get-claude-history'),
-
-    // 폴더 선택
-    selectFolder: () => ipcRenderer.invoke('select-folder'),
-
-    // Claude 응답 저장
     saveClaudeResponse: (options) => ipcRenderer.invoke('save-claude-response', options),
 
-    // .vibe-flow 폴더 파일 목록
-    listVibeFlowFiles: (workingDir) => ipcRenderer.invoke('list-vibe-flow-files', { workingDir }),
+    // 양방향 통신 (대화형 모드)
+    respondToClaude: (processId, response) => ipcRenderer.invoke('respond-to-claude', { processId, response }),
+    closeClaude: (processId) => ipcRenderer.invoke('close-claude', { processId }),
+    getClaudeStatus: (processId) => ipcRenderer.invoke('get-claude-status', { processId }),
+    onClaudeQuestion: (callback) => {
+        ipcRenderer.on('claude-question', (event, data) => callback(data));
+    },
+    removeClaudeQuestionListener: () => {
+        ipcRenderer.removeAllListeners('claude-question');
+    },
 
-    // Claude Code 설치 관련
-    checkClaudeInstalled: (projectPath) => ipcRenderer.invoke('check-claude-installed', { projectPath }),
-    initClaude: (projectPath) => ipcRenderer.invoke('init-claude', { projectPath }),
-    installAgents: (projectPath, agentNames) => ipcRenderer.invoke('install-agents', { projectPath, agentNames }),
-    listAvailableAgents: () => ipcRenderer.invoke('list-available-agents')
-});
+    // 파일 관리
+    listVibeFlowFiles: (options) => ipcRenderer.invoke('list-vibe-flow-files', options),
+    openFile: (filePath) => ipcRenderer.invoke('open-file', { filePath }),
+
+    // 폴더 탐색기 및 외부 편집기
+    listDirectory: (dirPath, recursive = false) => ipcRenderer.invoke('list-directory', { dirPath, recursive }),
+    openInVscode: (targetPath) => ipcRenderer.invoke('open-in-vscode', { targetPath }),
+    openInExplorer: (targetPath) => ipcRenderer.invoke('open-in-explorer', { targetPath }),
+    openWithEditor: (targetPath, editor) => ipcRenderer.invoke('open-with-editor', { targetPath, editor }),
+
+    // 터미널
+    spawnTerminal: (options) => ipcRenderer.invoke('spawn-terminal', options),
+    terminalInput: (sessionId, input) => ipcRenderer.invoke('terminal-input', { sessionId, input }),
+    closeTerminal: (sessionId) => ipcRenderer.invoke('close-terminal', { sessionId }),
+    onTerminalOutput: (callback) => ipcRenderer.on('terminal-output', (e, data) => callback(data)),
+    removeTerminalListener: () => ipcRenderer.removeAllListeners('terminal-output')
+};
+
+console.log('✅ electronAPI loaded:', Object.keys(window.electronAPI));

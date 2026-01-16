@@ -1,36 +1,28 @@
 import { useState, useEffect } from 'react'
 import useProjectStore from '../store/projectStore'
 
-function ProjectInput({ onClose }) {
-    const { createProject, updateProject } = useProjectStore()
-    const [step, setStep] = useState('input') // input | setup | decomposing | review
+function ProjectInput({ onClose, mode = 'new' }) {
+    const {
+        createProject,
+        updateProject,
+        openProject,
+        registerProject,
+        loadRegisteredProjects
+    } = useProjectStore()
+
+    // input | install | setup | decomposing | review
+    const [step, setStep] = useState('input')
     const [goal, setGoal] = useState('')
     const [workingDir, setWorkingDir] = useState('')
-    const [components, setComponents] = useState([])
+    const [tasks, setTasks] = useState([])
     const [isLoading, setIsLoading] = useState(false)
 
-    // Claude Code 설치 관련 상태
-    const [claudeStatus, setClaudeStatus] = useState(null) // { isInstalled, hasAgents, installedAgents }
-    const [availableAgents, setAvailableAgents] = useState([])
-    const [selectedAgents, setSelectedAgents] = useState([])
+    // VFM 패키지 상태
+    const [vfmStatus, setVfmStatus] = useState(null) // { installed, version, needsUpdate }
     const [setupMessage, setSetupMessage] = useState('')
+    const [showUpdatePrompt, setShowUpdatePrompt] = useState(false)
 
-    // 사용 가능한 에이전트 목록 로드
-    useEffect(() => {
-        const loadAgents = async () => {
-            if (window.electronAPI) {
-                const result = await window.electronAPI.listAvailableAgents()
-                if (result.success) {
-                    setAvailableAgents(result.agents)
-                    // 기본적으로 모든 에이전트 선택
-                    setSelectedAgents(result.agents.map(a => a.name))
-                }
-            }
-        }
-        loadAgents()
-    }, [])
-
-    // 폴더 선택 시 Claude 설치 상태 확인
+    // 폴더 선택 시 VFM 패키지 확인
     const handleFolderSelect = async () => {
         if (!window.electronAPI) return
 
@@ -39,44 +31,35 @@ function ProjectInput({ onClose }) {
             setWorkingDir(result.path)
             if (!goal) setGoal(result.name)
 
-            // Claude 설치 상태 확인
-            const status = await window.electronAPI.checkClaudeInstalled(result.path)
-            if (status.success) {
-                setClaudeStatus(status)
+            // VFM 패키지 확인
+            const pkgStatus = await window.electronAPI.checkVfmPackage(result.path)
+            setVfmStatus(pkgStatus)
+
+            if (pkgStatus.installed && pkgStatus.needsUpdate) {
+                setShowUpdatePrompt(true)
             }
         }
     }
 
-    // Claude Code 설정 (초기화 + 에이전트 설치)
-    const handleSetupClaude = async () => {
+    // VFM 패키지 설치
+    const handleInstallVfm = async () => {
         if (!workingDir || !window.electronAPI) return
 
-        setStep('setup')
-        setSetupMessage('Claude Code 초기화 중...')
+        setStep('install')
+        setSetupMessage('VFM 패키지 설치 중...')
 
         try {
-            // 1. Claude Code 초기화
-            const initResult = await window.electronAPI.initClaude(workingDir)
-            if (!initResult.success) {
-                throw new Error(initResult.error)
+            // VFM 패키지 설치
+            const installResult = await window.electronAPI.installVfmPackage(workingDir)
+            if (!installResult.success) {
+                throw new Error(installResult.error)
             }
 
-            setSetupMessage('에이전트 설치 중...')
-
-            // 2. 선택된 에이전트 설치
-            if (selectedAgents.length > 0) {
-                const installResult = await window.electronAPI.installAgents(workingDir, selectedAgents)
-                if (!installResult.success) {
-                    throw new Error(installResult.error)
-                }
-                setSetupMessage(`${installResult.installedAgents.length}개 에이전트 설치 완료!`)
-            }
+            setSetupMessage('VFM 패키지 설치 완료!')
 
             // 상태 업데이트
-            const newStatus = await window.electronAPI.checkClaudeInstalled(workingDir)
-            if (newStatus.success) {
-                setClaudeStatus(newStatus)
-            }
+            const newStatus = await window.electronAPI.checkVfmPackage(workingDir)
+            setVfmStatus(newStatus)
 
             // 잠시 후 다음 단계로
             setTimeout(() => {
@@ -84,23 +67,42 @@ function ProjectInput({ onClose }) {
             }, 1000)
 
         } catch (err) {
-            console.error('Claude 설정 에러:', err)
+            console.error('VFM 설치 에러:', err)
             setSetupMessage(`에러: ${err.message}`)
             setTimeout(() => setStep('input'), 2000)
         }
     }
 
-    // 에이전트 선택 토글
-    const toggleAgent = (agentName) => {
-        setSelectedAgents(prev =>
-            prev.includes(agentName)
-                ? prev.filter(a => a !== agentName)
-                : [...prev, agentName]
-        )
+    // 기존 프로젝트 열기
+    const handleOpenExisting = async () => {
+        if (!workingDir || !vfmStatus?.installed) return
+
+        setStep('setup')
+        setSetupMessage('프로젝트 로딩 중...')
+
+        try {
+            await openProject(workingDir)
+            onClose()
+        } catch (err) {
+            console.error('프로젝트 열기 에러:', err)
+            setSetupMessage(`에러: ${err.message}`)
+            setTimeout(() => setStep('input'), 2000)
+        }
     }
 
+    // 프로젝트 분해 시작
     const handleDecompose = async () => {
         if (!goal.trim()) return
+
+        // VFM 패키지가 없으면 먼저 설치
+        if (!vfmStatus?.installed) {
+            await handleInstallVfm()
+            // 설치 완료 후 계속
+            const newStatus = await window.electronAPI?.checkVfmPackage(workingDir)
+            if (!newStatus?.installed) {
+                return // 설치 실패
+            }
+        }
 
         setIsLoading(true)
         setStep('decomposing')
@@ -116,9 +118,9 @@ function ProjectInput({ onClose }) {
 
 응답은 반드시 다음 JSON 형식만 출력해주세요 (다른 텍스트 없이):
 {
-  "components": [
+  "tasks": [
     {
-      "name": "컴포넌트 이름",
+      "name": "태스크 이름",
       "description": "설명",
       "priority": 1
     }
@@ -127,39 +129,43 @@ function ProjectInput({ onClose }) {
 
             try {
                 const result = await window.electronAPI.runClaude({
-                    workingDir: workingDir || process.cwd(),
-                    prompt
+                    workingDir: workingDir,
+                    prompt,
+                    agent: 'vfm-draft',
+                    permissionMode: 'default'
                 })
 
-                // 분석 결과를 .vibe-flow 폴더에 저장
+                // 분석 결과 저장
                 if (result.stdout && workingDir) {
                     await window.electronAPI.saveClaudeResponse({
                         workingDir: workingDir,
                         stage: '분석',
-                        componentName: '프로젝트분해',
+                        taskName: '프로젝트분해',
                         response: result.stdout,
                         prompt: prompt
                     })
                 }
 
                 // JSON 파싱 시도
-                const jsonMatch = result.stdout.match(/\{[\s\S]*\}/);
+                const jsonMatch = result.stdout?.match(/\{[\s\S]*\}/)
                 if (jsonMatch) {
                     const parsed = JSON.parse(jsonMatch[0])
-                    setComponents(parsed.components || [])
+                    setTasks(parsed.tasks || [])
                     setStep('review')
+                } else {
+                    throw new Error('JSON 파싱 실패')
                 }
             } catch (err) {
                 console.error('Decompose error:', err)
-                // 기본 컴포넌트로 폴백
-                setComponents([
+                // 기본 태스크로 폴백
+                setTasks([
                     { name: '기본 구조', description: '프로젝트 기본 설정', priority: 1 }
                 ])
                 setStep('review')
             }
         } else {
             // 개발 모드: 더미 데이터
-            setComponents([
+            setTasks([
                 { name: '인증 시스템', description: 'Google OAuth 로그인', priority: 1 },
                 { name: '데이터베이스', description: 'Firebase/Firestore 설정', priority: 2 },
                 { name: '메인 기능', description: '핵심 비즈니스 로직', priority: 3 },
@@ -171,27 +177,31 @@ function ProjectInput({ onClose }) {
         setIsLoading(false)
     }
 
+    // 태스크 확정
     const handleConfirm = async () => {
-        // 컴포넌트들을 프로젝트에 추가
-        for (const comp of components) {
-            await useProjectStore.getState().addComponent(comp)
+        // 태스크들을 프로젝트에 추가
+        for (const task of tasks) {
+            await useProjectStore.getState().addTask(task)
         }
         await updateProject({ status: 'active' })
         onClose()
     }
 
-    const handleAddComponent = () => {
-        setComponents([...components, { name: '', description: '', priority: components.length + 1 }])
+    // 태스크 추가
+    const handleAddTask = () => {
+        setTasks([...tasks, { name: '', description: '', priority: tasks.length + 1 }])
     }
 
-    const handleRemoveComponent = (index) => {
-        setComponents(components.filter((_, i) => i !== index))
+    // 태스크 제거
+    const handleRemoveTask = (index) => {
+        setTasks(tasks.filter((_, i) => i !== index))
     }
 
-    const handleUpdateComponent = (index, field, value) => {
-        const updated = [...components]
+    // 태스크 업데이트
+    const handleUpdateTask = (index, field, value) => {
+        const updated = [...tasks]
         updated[index] = { ...updated[index], [field]: value }
-        setComponents(updated)
+        setTasks(updated)
     }
 
     return (
@@ -199,7 +209,7 @@ function ProjectInput({ onClose }) {
             <div className="modal project-input-modal">
                 {step === 'input' && (
                     <>
-                        <h2>🚀 새 프로젝트</h2>
+                        <h2>🚀 {mode === 'new' ? '새 프로젝트' : '프로젝트 열기'}</h2>
 
                         <div className="form-group">
                             <label>작업 디렉토리</label>
@@ -220,53 +230,46 @@ function ProjectInput({ onClose }) {
                                 </button>
                             </div>
 
-                            {/* Claude Code 설치 상태 표시 */}
-                            {workingDir && claudeStatus && (
-                                <div className="claude-status">
-                                    {claudeStatus.isInstalled ? (
+                            {/* VFM 패키지 상태 표시 */}
+                            {workingDir && vfmStatus && (
+                                <div className="vfm-status">
+                                    {vfmStatus.installed ? (
                                         <div className="status-installed">
-                                            <span className="status-badge success">Claude Code 설치됨</span>
-                                            {claudeStatus.hasAgents && (
-                                                <span className="agent-count">
-                                                    에이전트: {claudeStatus.installedAgents.length}개
-                                                </span>
+                                            <span className="status-badge success">
+                                                VFM 패키지 설치됨 (v{vfmStatus.version})
+                                            </span>
+                                            {vfmStatus.needsUpdate && (
+                                                <button
+                                                    type="button"
+                                                    className="btn-small btn-warning"
+                                                    onClick={handleInstallVfm}
+                                                >
+                                                    업데이트
+                                                </button>
                                             )}
                                         </div>
                                     ) : (
                                         <div className="status-not-installed">
-                                            <span className="status-badge warning">Claude Code 미설치</span>
-                                            <button
-                                                type="button"
-                                                className="btn-small btn-primary"
-                                                onClick={handleSetupClaude}
-                                            >
-                                                설치하기
-                                            </button>
+                                            <span className="status-badge warning">
+                                                VFM 패키지 미설치
+                                            </span>
+                                            <p className="status-desc">
+                                                프로젝트 생성 시 자동으로 설치됩니다.
+                                            </p>
                                         </div>
                                     )}
                                 </div>
                             )}
 
-                            {/* 에이전트 선택 (설치 안된 경우) */}
-                            {workingDir && claudeStatus && !claudeStatus.isInstalled && availableAgents.length > 0 && (
-                                <div className="agent-selection">
-                                    <label>설치할 에이전트 선택</label>
-                                    <div className="agent-list">
-                                        {availableAgents.map(agent => (
-                                            <label key={agent.name} className="agent-item">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedAgents.includes(agent.name)}
-                                                    onChange={() => toggleAgent(agent.name)}
-                                                />
-                                                <span className={`agent-badge ${agent.color}`}>
-                                                    {agent.name}
-                                                </span>
-                                                <span className="agent-desc">{agent.description}</span>
-                                            </label>
-                                        ))}
-                                    </div>
-                                </div>
+                            {/* 기존 프로젝트 열기 버튼 */}
+                            {workingDir && vfmStatus?.installed && (
+                                <button
+                                    type="button"
+                                    className="btn-open-existing"
+                                    onClick={handleOpenExisting}
+                                >
+                                    📂 기존 프로젝트 열기
+                                </button>
                             )}
                         </div>
 
@@ -279,6 +282,24 @@ function ProjectInput({ onClose }) {
                                 rows={3}
                             />
                         </div>
+
+                        {/* VFM 패키지 안내 */}
+                        {workingDir && !vfmStatus?.installed && (
+                            <div className="vfm-info-box">
+                                <h4>VFM 패키지란?</h4>
+                                <p>
+                                    VFM 패키지는 프로젝트에 설치되어 5단계 워크플로우와
+                                    전용 에이전트를 제공합니다.
+                                </p>
+                                <ul>
+                                    <li>📝 초안 - 요구사항 분석</li>
+                                    <li>📋 플랜 - 구현 계획</li>
+                                    <li>🔄 진행 - 코드 구현 (Agentic Mode)</li>
+                                    <li>🧪 검증 - 테스트 및 리뷰</li>
+                                    <li>✅ 완료 - 문서화</li>
+                                </ul>
+                            </div>
+                        )}
 
                         <div className="modal-actions">
                             <button onClick={onClose}>취소</button>
@@ -293,10 +314,23 @@ function ProjectInput({ onClose }) {
                     </>
                 )}
 
+                {step === 'install' && (
+                    <div className="loading-state">
+                        <div className="spinner"></div>
+                        <h3>VFM 패키지 설치 중...</h3>
+                        <p>{setupMessage}</p>
+                        <div className="install-progress">
+                            <div className="progress-item">📁 .vfm 폴더 생성</div>
+                            <div className="progress-item">🤖 에이전트 설치</div>
+                            <div className="progress-item">📝 CLAUDE.md 생성</div>
+                        </div>
+                    </div>
+                )}
+
                 {step === 'setup' && (
                     <div className="loading-state">
                         <div className="spinner"></div>
-                        <h3>Claude Code 설정 중...</h3>
+                        <h3>프로젝트 설정 중...</h3>
                         <p>{setupMessage}</p>
                     </div>
                 )}
@@ -305,35 +339,37 @@ function ProjectInput({ onClose }) {
                     <div className="loading-state">
                         <div className="spinner"></div>
                         <h3>AI가 프로젝트를 분석하고 있습니다...</h3>
-                        <p>잠시만 기다려주세요</p>
+                        <p>vfm-draft 에이전트가 프로젝트 구조를 분석합니다</p>
                     </div>
                 )}
 
                 {step === 'review' && (
                     <>
-                        <h2>📦 컴포넌트 검토</h2>
-                        <p className="subtitle">AI가 분해한 결과입니다. 수정하거나 추가/삭제할 수 있습니다.</p>
+                        <h2>📦 태스크 검토</h2>
+                        <p className="subtitle">
+                            AI가 분해한 결과입니다. 수정하거나 추가/삭제할 수 있습니다.
+                        </p>
 
-                        <div className="components-list">
-                            {components.map((comp, index) => (
-                                <div key={index} className="component-item">
+                        <div className="tasks-list">
+                            {tasks.map((task, index) => (
+                                <div key={index} className="task-item">
                                     <input
                                         type="text"
-                                        value={comp.name}
-                                        onChange={(e) => handleUpdateComponent(index, 'name', e.target.value)}
-                                        placeholder="컴포넌트 이름"
-                                        className="component-name"
+                                        value={task.name}
+                                        onChange={(e) => handleUpdateTask(index, 'name', e.target.value)}
+                                        placeholder="태스크 이름"
+                                        className="task-name"
                                     />
                                     <input
                                         type="text"
-                                        value={comp.description}
-                                        onChange={(e) => handleUpdateComponent(index, 'description', e.target.value)}
+                                        value={task.description}
+                                        onChange={(e) => handleUpdateTask(index, 'description', e.target.value)}
                                         placeholder="설명"
-                                        className="component-desc"
+                                        className="task-desc"
                                     />
                                     <button
                                         className="btn-icon"
-                                        onClick={() => handleRemoveComponent(index)}
+                                        onClick={() => handleRemoveTask(index)}
                                     >
                                         🗑️
                                     </button>
@@ -341,8 +377,8 @@ function ProjectInput({ onClose }) {
                             ))}
                         </div>
 
-                        <button className="btn-add" onClick={handleAddComponent}>
-                            + 컴포넌트 추가
+                        <button className="btn-add" onClick={handleAddTask}>
+                            + 태스크 추가
                         </button>
 
                         <div className="modal-actions">
@@ -350,7 +386,7 @@ function ProjectInput({ onClose }) {
                             <button
                                 className="btn-primary"
                                 onClick={handleConfirm}
-                                disabled={components.length === 0}
+                                disabled={tasks.length === 0}
                             >
                                 ✅ 확정하고 시작
                             </button>

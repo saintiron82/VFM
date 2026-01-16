@@ -1,0 +1,12 @@
+{
+  "version": "1.0.0",
+  "installedAt": null,
+  "stageAgents": {
+    "초안": "vfm-draft",
+    "플랜": "vfm-plan",
+    "진행": "vfm-progress",
+    "검증": "vfm-verify",
+    "완료": "vfm-complete"
+  },
+  "customAgents": []
+}
